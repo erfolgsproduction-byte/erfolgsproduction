@@ -1,0 +1,7 @@
+{
+  "name": "Copy of ERFOLGS STORE - Management System",
+  "description": "Sistem manajemen produksi dan marketplace terintegrasi untuk ERFOLGS STORE, mendukung alur kerja dari pesanan masuk hingga pengiriman dengan fitur multi-user dan AI-powered cataloging.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
