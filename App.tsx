@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import Layout from './components/Layout';
-import Login from './components/Login';
-import AdminDashboard from './components/AdminDashboard';
-import WorkerView from './components/WorkerView';
-import CatalogView from './components/CatalogView';
-import InputOrderView from './components/InputOrderView';
-import OrderListView from './components/OrderListView';
-import ReportView from './components/ReportView';
-import { UserRole, Order, OrderStatus, CatalogProduct, OrderType, ViewType } from './types';
-import { supabase } from './services/supabase';
+import Layout from './components/Layout.tsx';
+import Login from './components/Login.tsx';
+import AdminDashboard from './components/AdminDashboard.tsx';
+import WorkerView from './components/WorkerView.tsx';
+import CatalogView from './components/CatalogView.tsx';
+import InputOrderView from './components/InputOrderView.tsx';
+import OrderListView from './components/OrderListView.tsx';
+import ReportView from './components/ReportView.tsx';
+import { UserRole, Order, OrderStatus, CatalogProduct, OrderType, ViewType } from './types.ts';
+import { supabase } from './services/supabase.ts';
 import { ShieldAlert } from 'lucide-react';
 
 const STORAGE_KEY = 'erfolgs_last_view';
@@ -167,43 +167,15 @@ const App: React.FC = () => {
     };
 
     const updatedHistory = [...(orderToUpdate.history || []), newHistoryEntry];
-    
-    // Payload untuk Supabase
-    const updatePayload: any = { 
-      status: nextStatus, 
-      history: updatedHistory 
-    };
-
-    // returnDate dikirimkan hanya jika ada nilainya
-    if (returnDate) {
-      updatePayload.returnDate = returnDate;
-    }
+    const updatePayload: any = { status: nextStatus, history: updatedHistory };
+    if (returnDate) updatePayload.returnDate = returnDate;
     
     try {
-      // Kirim pembaruan ke Supabase
-      const { error } = await supabase
-        .from('orders')
-        .update(updatePayload)
-        .eq('id', orderId);
-
-      if (error) {
-        // Jika error kolom tidak ditemukan, beri tahu user secara spesifik
-        if (error.message?.includes('returnDate')) {
-          throw new Error("Kolom 'returnDate' belum ada di database. Silakan jalankan perintah SQL ALTER TABLE di dashboard Supabase Anda.");
-        }
-        throw error;
-      }
-      
-      // Update state lokal agar UI langsung berubah
-      setOrders(currentOrders => 
-        currentOrders.map(o => 
-          o.id === orderId ? { ...o, ...updatePayload } : o
-        )
-      );
+      const { error } = await supabase.from('orders').update(updatePayload).eq('id', orderId);
+      if (error) throw error;
+      setOrders(currentOrders => currentOrders.map(o => o.id === orderId ? { ...o, ...updatePayload } : o));
     } catch (error: any) {
-      console.error('Update Status Error:', error);
       alert('UPDATE GAGAL: ' + error.message);
-      // Re-throw agar komponen pemanggil tahu terjadi error
       throw error;
     }
   };
@@ -211,11 +183,15 @@ const App: React.FC = () => {
   const handleDeleteOrder = async (id: string) => {
     if (userRole !== UserRole.SUPERADMIN) return;
     try {
+      // Menghapus data dari supabase
       const { error } = await supabase.from('orders').delete().eq('id', id);
       if (error) throw error;
+      
+      // Update state lokal agar UI sinkron
       setOrders(prev => prev.filter(o => o.id !== id));
     } catch (error: any) {
-      alert('Error: ' + error.message);
+      console.error('Delete Error:', error);
+      alert('Gagal menghapus data: ' + error.message);
     }
   };
 
@@ -277,7 +253,6 @@ const App: React.FC = () => {
     }
 
     if (!userRole) return null;
-
     const isManager = userRole === UserRole.SUPERADMIN || userRole === UserRole.ADMIN_MARKETPLACE;
     
     if (!isManager) return <WorkerView role={userRole} orders={orders} catalog={catalog} onUpdateStatus={handleUpdateStatus} />;
