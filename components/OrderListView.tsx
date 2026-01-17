@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Order, STATUS_LABELS, OrderStatus, ROLE_LABELS, OrderType, CatalogProduct, MARKETPLACE_LIST, UserRole } from '../types';
-import { Search, History as HistoryIcon, X, User as UserIcon, Check, ImageIcon, Trash2, Edit3, Calendar, FileSpreadsheet, Printer, Hash, Info, Tag, UserPlus, ChevronDown, Activity, Clock, ShoppingBag, Package, AlertTriangle, Download, Filter, Truck, RotateCcw, Lock, MoreVertical, Scissors, Clipboard, BarChart3, ListOrdered } from 'lucide-react';
+import { Search, History as HistoryIcon, X, User as UserIcon, Check, ImageIcon, Trash2, Edit3, Calendar, FileSpreadsheet, Printer, Hash, Info, Tag, UserPlus, ChevronDown, Activity, Clock, ShoppingBag, Package, AlertTriangle, Download, Filter, Truck, RotateCcw, Lock, MoreVertical, Scissors, Clipboard, BarChart3, ListOrdered, FileDown, Loader2 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import ExcelJS from 'exceljs';
@@ -27,7 +27,7 @@ const OrderListView: React.FC<OrderListViewProps> = ({ orders, catalog, userRole
     onlyUrgent: false
   });
   const [editingStatusId, setEditingStatusId] = useState<string | null>(null);
-  const [isExporting, setIsExporting] = useState(false);
+  const [exportingType, setExportingType] = useState<'pdf' | 'excel' | null>(null);
   const [returnDateModal, setReturnDateModal] = useState<{orderId: string, date: string} | null>(null);
   const [showFiltersMobile, setShowFiltersMobile] = useState(false);
 
@@ -140,7 +140,7 @@ const OrderListView: React.FC<OrderListViewProps> = ({ orders, catalog, userRole
   }, [filteredOrders]);
 
   const handleExportPDF = async () => {
-    setIsExporting(true);
+    setExportingType('pdf');
     try {
       const doc = new jsPDF('landscape', 'mm', 'a4');
       const pageWidth = doc.internal.pageSize.getWidth();
@@ -149,7 +149,6 @@ const OrderListView: React.FC<OrderListViewProps> = ({ orders, catalog, userRole
       const rowsNeeded = Math.max(1, Math.ceil(mpCount / 4));
       const headerAreaHeight = 45 + (rowsNeeded * 7);
 
-      // Main Header Rect
       doc.setFillColor(15, 23, 42); 
       doc.rect(0, 0, pageWidth, headerAreaHeight, 'F');
       
@@ -162,12 +161,10 @@ const OrderListView: React.FC<OrderListViewProps> = ({ orders, catalog, userRole
       doc.setFont('helvetica', 'normal');
       doc.text(`Rekapitulasi Laporan Produksi - ${todayStr}`, 14, 28);
       
-      // Grand Total Text
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(59, 130, 246);
       doc.text(`TOTAL KESELURUHAN: ${stats.totalCount} ORDER / ${stats.totalQty} PCS`, pageWidth - 14, 28, { align: 'right' });
 
-      // Marketplace Summary
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(9);
       doc.text('RINGKASAN MARKETPLACE:', 14, 38);
@@ -187,7 +184,7 @@ const OrderListView: React.FC<OrderListViewProps> = ({ orders, catalog, userRole
         order.orderId, 
         order.resi || '-', 
         order.productName,
-        '', // Image placeholder
+        '', 
         (order.backName || order.backNumber) ? `${order.backName || ''} #${order.backNumber || ''}` : '-',
         order.size, 
         order.quantity, 
@@ -242,12 +239,12 @@ const OrderListView: React.FC<OrderListViewProps> = ({ orders, catalog, userRole
       console.error(error);
       alert("Gagal export PDF.");
     } finally {
-      setIsExporting(false);
+      setExportingType(null);
     }
   };
 
   const handleExportExcel = async () => {
-    setIsExporting(true);
+    setExportingType('excel');
     try {
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet('Daftar Pesanan');
@@ -337,7 +334,7 @@ const OrderListView: React.FC<OrderListViewProps> = ({ orders, catalog, userRole
       console.error(error);
       alert("Gagal export Excel.");
     } finally {
-      setIsExporting(false);
+      setExportingType(null);
     }
   };
 
@@ -406,55 +403,66 @@ const OrderListView: React.FC<OrderListViewProps> = ({ orders, catalog, userRole
           </button>
         </div>
 
-        <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-12 gap-4 ${showFiltersMobile ? 'grid' : 'hidden md:grid'}`}>
+        <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-12 gap-4 ${showFiltersMobile ? 'grid' : 'hidden md:grid'}`}>
           <div className="xl:col-span-2">
-            <select value={filters.status} onChange={(e) => setFilters(prev => ({...prev, status: e.target.value}))} className="w-full px-5 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[11px] font-black uppercase outline-none focus:bg-white focus:border-blue-100 transition-all cursor-pointer">
+            <select value={filters.status} onChange={(e) => setFilters(prev => ({...prev, status: e.target.value}))} className="w-full px-4 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[10px] font-black uppercase outline-none focus:bg-white focus:border-blue-100 transition-all cursor-pointer">
               <option value="">STATUS PRODUKSI</option>
               {Object.entries(STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </div>
           <div className="xl:col-span-2">
-            <select value={filters.marketplace} onChange={(e) => setFilters(prev => ({...prev, marketplace: e.target.value}))} className="w-full px-5 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[11px] font-black uppercase outline-none focus:bg-white focus:border-blue-100 transition-all cursor-pointer">
+            <select value={filters.marketplace} onChange={(e) => setFilters(prev => ({...prev, marketplace: e.target.value}))} className="w-full px-4 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[10px] font-black uppercase outline-none focus:bg-white focus:border-blue-100 transition-all cursor-pointer">
               <option value="">MARKETPLACE</option>
               {MARKETPLACE_LIST.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
           </div>
           <div className="xl:col-span-2">
-            <select value={filters.type} onChange={(e) => setFilters(prev => ({...prev, type: e.target.value}))} className="w-full px-5 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[11px] font-black uppercase outline-none focus:bg-white focus:border-blue-100 transition-all cursor-pointer">
+            <select value={filters.type} onChange={(e) => setFilters(prev => ({...prev, type: e.target.value}))} className="w-full px-4 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[10px] font-black uppercase outline-none focus:bg-white focus:border-blue-100 transition-all cursor-pointer">
               <option value="">TIPE (PO/STOCK)</option>
               <option value={OrderType.PRE_ORDER}>PRODUKSI (PO)</option>
               <option value={OrderType.STOCK}>STOK READY</option>
             </select>
           </div>
-          <div className="xl:col-span-1">
+          
+          <div className="xl:col-span-2 flex gap-2">
              <button 
                onClick={() => setFilters(prev => ({...prev, onlyCustom: !prev.onlyCustom}))}
-               className={`w-full py-3.5 rounded-2xl text-[10px] font-black uppercase transition-all flex items-center justify-center gap-2 border-2 ${filters.onlyCustom ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-100' : 'bg-white border-slate-100 text-slate-400 hover:border-blue-200'}`}
+               className={`flex-1 py-3.5 rounded-2xl text-[10px] font-black uppercase transition-all flex items-center justify-center gap-2 border-2 ${filters.onlyCustom ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-100' : 'bg-white border-slate-100 text-slate-400 hover:border-blue-200'}`}
              >
-               <Scissors size={14} /> CUSTOM
+               <Scissors size={14} /> <span className="whitespace-nowrap">CUSTOM</span>
              </button>
-          </div>
-          <div className="xl:col-span-1">
              <button 
                onClick={() => setFilters(prev => ({...prev, onlyUrgent: !prev.onlyUrgent}))}
-               className={`w-full py-3.5 rounded-2xl text-[10px] font-black uppercase transition-all flex items-center justify-center gap-2 border-2 ${filters.onlyUrgent ? 'bg-red-600 border-red-600 text-white shadow-lg shadow-red-100' : 'bg-white border-slate-100 text-slate-400 hover:border-red-200'}`}
+               className={`flex-1 py-3.5 rounded-2xl text-[10px] font-black uppercase transition-all flex items-center justify-center gap-2 border-2 ${filters.onlyUrgent ? 'bg-red-600 border-red-600 text-white shadow-lg shadow-red-100' : 'bg-white border-slate-100 text-slate-400 hover:border-red-200'}`}
              >
-               <AlertTriangle size={14} /> URGENT
+               <AlertTriangle size={14} /> <span className="whitespace-nowrap">URGENT</span>
              </button>
           </div>
+
           <div className="xl:col-span-2 flex gap-2">
-             <input type="date" value={filters.startDate} onChange={(e) => setFilters(prev => ({...prev, startDate: e.target.value}))} className="flex-1 px-4 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[11px] font-black outline-none focus:bg-white focus:border-blue-100" />
-             <input type="date" value={filters.endDate} onChange={(e) => setFilters(prev => ({...prev, endDate: e.target.value}))} className="flex-1 px-4 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[11px] font-black outline-none focus:bg-white focus:border-blue-100" />
+             <input type="date" value={filters.startDate} onChange={(e) => setFilters(prev => ({...prev, startDate: e.target.value}))} className="flex-1 px-3 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[10px] font-black outline-none focus:bg-white focus:border-blue-100 min-w-0" />
+             <input type="date" value={filters.endDate} onChange={(e) => setFilters(prev => ({...prev, endDate: e.target.value}))} className="flex-1 px-3 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[10px] font-black outline-none focus:bg-white focus:border-blue-100 min-w-0" />
           </div>
+
           <div className="xl:col-span-2 flex gap-2">
-             <button onClick={handleExportPDF} disabled={isExporting} className="flex-1 py-3.5 bg-red-600 text-white rounded-2xl text-[11px] font-black uppercase disabled:opacity-50 hover:bg-red-700 transition-all shadow-md active:scale-95">
-               {isExporting ? '...' : 'PDF'}
+             <button 
+               onClick={handleExportPDF} 
+               disabled={exportingType !== null} 
+               className="flex-1 min-w-0 py-2.5 bg-red-600 text-white rounded-2xl text-[10px] font-black uppercase disabled:opacity-50 hover:bg-red-700 transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
+             >
+               {exportingType === 'pdf' ? <Loader2 size={12} className="animate-spin" /> : <FileDown size={14} />}
+               <span className="hidden sm:inline">PDF</span>
              </button>
-             <button onClick={handleExportExcel} disabled={isExporting} className="flex-1 py-3.5 bg-emerald-600 text-white rounded-2xl text-[11px] font-black uppercase disabled:opacity-50 hover:bg-emerald-700 transition-all shadow-md active:scale-95">
-               {isExporting ? '...' : 'EXCEL'}
+             <button 
+               onClick={handleExportExcel} 
+               disabled={exportingType !== null} 
+               className="flex-1 min-w-0 py-2.5 bg-emerald-600 text-white rounded-2xl text-[10px] font-black uppercase disabled:opacity-50 hover:bg-emerald-700 transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
+             >
+               {exportingType === 'excel' ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={14} />}
+               <span className="hidden sm:inline">EXCEL</span>
              </button>
-             <button onClick={() => setFilters({ status: '', marketplace: '', type: '', startDate: '', endDate: '', onlyCustom: false, onlyUrgent: false })} className="p-3.5 bg-slate-100 text-slate-400 rounded-2xl hover:bg-slate-200 transition-colors">
-               <RotateCcw size={18} />
+             <button onClick={() => setFilters({ status: '', marketplace: '', type: '', startDate: '', endDate: '', onlyCustom: false, onlyUrgent: false })} className="p-2.5 bg-slate-100 text-slate-400 rounded-2xl hover:bg-slate-200 transition-colors flex-shrink-0">
+               <RotateCcw size={16} />
              </button>
           </div>
         </div>
