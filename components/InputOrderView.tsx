@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Order, OrderStatus, OrderType, CatalogProduct, MARKETPLACE_LIST } from '../types';
-import { ListPlus, Send, Search, ChevronDown, Check, Calendar, Hash, CircleUser, ShoppingBag, Truck } from 'lucide-react';
+import { ListPlus, Send, Search, ChevronDown, Check, Calendar, Hash, CircleUser, ShoppingBag, Truck, Trash2, PlusCircle, X, AlertTriangle } from 'lucide-react';
 
 interface InputOrderViewProps {
   catalog: CatalogProduct[];
@@ -10,6 +10,7 @@ interface InputOrderViewProps {
 const EXPEDITIONS = ['J&T Express', 'SPX', 'JNE', 'ANTERAJA', 'SICEPAT', 'LAINNYA / INPUT MANUAL'];
 const SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL', '5XL'];
 const DRAFT_KEY = 'erfolgs_input_draft';
+const MARKETPLACES_STORAGE_KEY = 'erfolgs_marketplaces_list';
 
 const InputOrderView: React.FC<InputOrderViewProps> = ({ catalog, onAddOrder }) => {
   // Initialize from draft if exists
@@ -38,11 +39,37 @@ const InputOrderView: React.FC<InputOrderViewProps> = ({ catalog, onAddOrder }) 
     };
   });
 
+  // Dynamic Marketplace List
+  const [marketplaces, setMarketplaces] = useState<string[]>(() => {
+    const savedMarketplaces = localStorage.getItem(MARKETPLACES_STORAGE_KEY);
+    if (savedMarketplaces) {
+      try {
+        return JSON.parse(savedMarketplaces);
+      } catch (e) {
+        console.error("Failed to parse marketplaces", e);
+      }
+    }
+    return [...MARKETPLACE_LIST];
+  });
+
   const [customExpedition, setCustomExpedition] = useState('');
+  const [newMarketplaceName, setNewMarketplaceName] = useState('');
   const [showProductSearch, setShowProductSearch] = useState(false);
+  const [showMarketplaceSearch, setShowMarketplaceSearch] = useState(false);
   const [isJersey, setIsJersey] = useState(false);
   const [productSearchTerm, setProductSearchTerm] = useState('');
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [marketplaceSearchTerm, setMarketplaceSearchTerm] = useState('');
+  
+  // State for Custom Confirmation Modal
+  const [marketplaceToDelete, setMarketplaceToDelete] = useState<string | null>(null);
+  
+  const productDropdownRef = useRef<HTMLDivElement>(null);
+  const marketplaceDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Sync marketplaces to localStorage
+  useEffect(() => {
+    localStorage.setItem(MARKETPLACES_STORAGE_KEY, JSON.stringify(marketplaces));
+  }, [marketplaces]);
 
   // Auto-save draft whenever formData changes
   useEffect(() => {
@@ -51,8 +78,11 @@ const InputOrderView: React.FC<InputOrderViewProps> = ({ catalog, onAddOrder }) 
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      if (productDropdownRef.current && !productDropdownRef.current.contains(event.target as Node)) {
         setShowProductSearch(false);
+      }
+      if (marketplaceDropdownRef.current && !marketplaceDropdownRef.current.contains(event.target as Node)) {
+        setShowMarketplaceSearch(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -63,6 +93,38 @@ const InputOrderView: React.FC<InputOrderViewProps> = ({ catalog, onAddOrder }) 
     p.name.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
     p.category.toLowerCase().includes(productSearchTerm.toLowerCase())
   );
+
+  const filteredMarketplaces = marketplaces.filter(m => 
+    m.toLowerCase().includes(marketplaceSearchTerm.toLowerCase())
+  );
+
+  const handleAddMarketplace = () => {
+    const trimmed = newMarketplaceName.trim();
+    if (!trimmed) return;
+    if (marketplaces.includes(trimmed)) {
+      alert("Marketplace sudah ada di daftar!");
+      return;
+    }
+    setMarketplaces(prev => [...prev, trimmed]);
+    setFormData(prev => ({ ...prev, marketplace: trimmed }));
+    setNewMarketplaceName('');
+    setMarketplaceSearchTerm('');
+  };
+
+  const handlePrepareDelete = (e: React.MouseEvent, name: string) => {
+    e.stopPropagation();
+    setMarketplaceToDelete(name);
+  };
+
+  const confirmDeleteMarketplace = () => {
+    if (marketplaceToDelete) {
+      setMarketplaces(prev => prev.filter(m => m !== marketplaceToDelete));
+      if (formData.marketplace === marketplaceToDelete) {
+        setFormData(prev => ({ ...prev, marketplace: '' }));
+      }
+      setMarketplaceToDelete(null);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,7 +161,6 @@ const InputOrderView: React.FC<InputOrderViewProps> = ({ catalog, onAddOrder }) 
       backNumber: ''
     });
     setCustomExpedition('');
-    alert("Pesanan berhasil ditambahkan ke antrian produksi!");
   };
 
   const handleSelectProduct = (product: CatalogProduct) => {
@@ -159,7 +220,7 @@ const InputOrderView: React.FC<InputOrderViewProps> = ({ catalog, onAddOrder }) 
           </div>
         </div>
 
-        <div className="space-y-2 relative" ref={dropdownRef}>
+        <div className="space-y-2 relative" ref={productDropdownRef}>
           <label className="text-[10px] md:text-[11px] font-black text-slate-500 uppercase tracking-widest ml-1">Cari Produk Katalog</label>
           <div 
             onClick={() => setShowProductSearch(!showProductSearch)}
@@ -291,18 +352,83 @@ const InputOrderView: React.FC<InputOrderViewProps> = ({ catalog, onAddOrder }) 
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
-          <div className="space-y-2">
+          <div className="space-y-2 relative" ref={marketplaceDropdownRef}>
             <label className="text-[10px] md:text-[11px] font-black text-slate-500 uppercase tracking-widest ml-1">Marketplace</label>
-            <select 
-              value={formData.marketplace}
-              onChange={(e) => setFormData(prev => ({ ...prev, marketplace: e.target.value }))}
-              required
-              className="w-full px-5 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[10px] md:text-xs font-black appearance-none focus:bg-white focus:border-blue-200 cursor-pointer uppercase tracking-widest"
+            <div 
+              onClick={() => setShowMarketplaceSearch(!showMarketplaceSearch)}
+              className={`w-full px-5 py-3.5 bg-slate-50 border-2 ${formData.marketplace ? 'border-blue-200 bg-white' : 'border-transparent'} rounded-2xl cursor-pointer flex justify-between items-center text-[10px] md:text-xs font-black transition-all hover:bg-white uppercase tracking-widest`}
             >
-              <option value="">-- Pilih Marketplace --</option>
-              {MARKETPLACE_LIST.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
+              <span className={formData.marketplace ? 'text-slate-900' : 'text-slate-400'}>
+                {formData.marketplace || '-- Pilih Marketplace --'}
+              </span>
+              <ChevronDown size={18} className={formData.marketplace ? 'text-blue-500' : 'text-slate-300'} />
+            </div>
+
+            {showMarketplaceSearch && (
+              <div className="absolute z-50 mt-3 w-full bg-white border border-slate-200 shadow-2xl rounded-[1.5rem] overflow-hidden animate-in slide-in-from-top-2 duration-200">
+                <div className="p-4 bg-slate-50 border-b border-slate-100 space-y-3">
+                  <div className="relative">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                    <input 
+                      autoFocus
+                      type="text"
+                      value={marketplaceSearchTerm}
+                      onChange={(e) => setMarketplaceSearchTerm(e.target.value)}
+                      placeholder="Cari atau Tambah Baru..."
+                      className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500/50 uppercase"
+                    />
+                  </div>
+                </div>
+                <div className="max-h-56 overflow-y-auto p-2 space-y-1 custom-scrollbar">
+                  {filteredMarketplaces.length > 0 ? filteredMarketplaces.map(m => (
+                    <div 
+                      key={m}
+                      onClick={() => {
+                        setFormData(prev => ({ ...prev, marketplace: m }));
+                        setShowMarketplaceSearch(false);
+                      }}
+                      className="p-3 hover:bg-blue-50 rounded-xl cursor-pointer flex items-center justify-between group transition-colors"
+                    >
+                      <span className="text-[10px] font-black text-slate-700 uppercase tracking-wider">{m}</span>
+                      <div className="flex items-center gap-2">
+                        {formData.marketplace === m && <Check size={16} className="text-blue-500" />}
+                        <button 
+                          type="button"
+                          onClick={(e) => handlePrepareDelete(e, m)}
+                          className="opacity-0 group-hover:opacity-100 p-1.5 text-slate-300 hover:text-red-500 transition-all"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  )) : (
+                    <div className="p-4 text-center text-[10px] text-slate-400 font-bold uppercase">Marketplace tidak ditemukan</div>
+                  )}
+                </div>
+                
+                <div className="p-4 bg-slate-50 border-t border-slate-100 space-y-2">
+                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Tambah Marketplace Baru</p>
+                   <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        placeholder="Nama Marketplace..."
+                        value={newMarketplaceName}
+                        onChange={(e) => setNewMarketplaceName(e.target.value)}
+                        className="flex-1 px-4 py-2 bg-white border border-slate-200 rounded-xl text-[10px] font-bold uppercase outline-none focus:border-blue-400"
+                      />
+                      <button 
+                        type="button"
+                        onClick={handleAddMarketplace}
+                        className="p-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-lg shadow-blue-100"
+                      >
+                        <PlusCircle size={20} />
+                      </button>
+                   </div>
+                </div>
+              </div>
+            )}
           </div>
+
           <div className="space-y-2">
             <label className="text-[10px] md:text-[11px] font-black text-slate-500 uppercase tracking-widest ml-1">Kurir Ekspedisi</label>
             <div className="space-y-3">
@@ -362,6 +488,39 @@ const InputOrderView: React.FC<InputOrderViewProps> = ({ catalog, onAddOrder }) 
           SIMPAN KE DATABASE
         </button>
       </form>
+
+      {/* Custom Delete Confirmation Modal for Marketplace */}
+      {marketplaceToDelete && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-300">
+           <div className="bg-white w-full max-w-sm rounded-[3rem] p-10 text-center space-y-8 border border-slate-100 shadow-2xl">
+              <div className="w-24 h-24 bg-red-50 text-red-500 rounded-[2rem] flex items-center justify-center mx-auto border border-red-100 shadow-xl shadow-red-200/20">
+                <Trash2 size={44} />
+              </div>
+              <div className="space-y-3">
+                <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight">Hapus Marketplace?</h3>
+                <p className="text-[11px] font-bold text-slate-400 leading-relaxed uppercase tracking-wider">
+                  Menghapus <span className="text-slate-900 font-black">"{marketplaceToDelete}"</span> dari daftar pilihan dropdown?
+                </p>
+              </div>
+              <div className="flex flex-col gap-3">
+                 <button 
+                   type="button"
+                   onClick={confirmDeleteMarketplace} 
+                   className="w-full py-4.5 bg-red-600 text-white rounded-2xl font-black text-[11px] uppercase tracking-[0.3em] shadow-xl shadow-red-200 hover:bg-red-700 active:scale-95 transition-all"
+                 >
+                   Hapus Sekarang
+                 </button>
+                 <button 
+                   type="button"
+                   onClick={() => setMarketplaceToDelete(null)} 
+                   className="w-full py-4.5 bg-slate-100 text-slate-500 rounded-2xl font-black text-[11px] uppercase tracking-[0.3em] active:scale-95 transition-all"
+                 >
+                   Batalkan
+                 </button>
+              </div>
+           </div>
+        </div>
+      )}
     </div>
   );
 };

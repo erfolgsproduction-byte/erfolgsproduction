@@ -15,7 +15,8 @@
     "@google/genai": "^1.36.0",
     "@supabase/supabase-js": "2.39.7",
     "jspdf": "2.5.1",
-    "jspdf-autotable": "3.8.2"
+    "jspdf-autotable": "3.8.2",
+    "exceljs": "4.4.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Order, STATUS_LABELS, OrderStatus, ROLE_LABELS, OrderType, CatalogProduct, MARKETPLACE_LIST, UserRole } from '../types';
-import { Search, History as HistoryIcon, X, User as UserIcon, Check, ImageIcon, Trash2, Edit3, Calendar, FileSpreadsheet, Printer, Hash, Info, Tag, UserPlus, ChevronDown, Activity, Clock, ShoppingBag, Package, AlertTriangle, Download, Filter, Truck, RotateCcw, Lock } from 'lucide-react';
+import { Search, History as HistoryIcon, X, User as UserIcon, Check, ImageIcon, Trash2, Edit3, Calendar, FileSpreadsheet, Printer, Hash, Info, Tag, UserPlus, ChevronDown, Activity, Clock, ShoppingBag, Package, AlertTriangle, Download, Filter, Truck, RotateCcw, Lock, MoreVertical, Scissors, Clipboard, BarChart3, ListOrdered } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import ExcelJS from 'exceljs';
 
 interface OrderListViewProps {
   orders: Order[];
@@ -27,10 +28,8 @@ const OrderListView: React.FC<OrderListViewProps> = ({ orders, catalog, userRole
   });
   const [editingStatusId, setEditingStatusId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
-  const [isUpdatingReturn, setIsUpdatingReturn] = useState(false);
-  
-  // Return Date Modal State
   const [returnDateModal, setReturnDateModal] = useState<{orderId: string, date: string} | null>(null);
+  const [showFiltersMobile, setShowFiltersMobile] = useState(false);
 
   const isSuperAdmin = userRole === UserRole.SUPERADMIN;
   const todayStr = new Date().toISOString().split('T')[0];
@@ -44,29 +43,15 @@ const OrderListView: React.FC<OrderListViewProps> = ({ orders, catalog, userRole
     try {
       await onUpdateStatus(orderId, nextStatus);
       setEditingStatusId(null);
-    } catch (err) {
-      // Error handled in App.tsx
-    }
+    } catch (err) {}
   };
 
   const confirmReturnDate = async () => {
     if (returnDateModal) {
-      setIsUpdatingReturn(true);
       try {
         await onUpdateStatus(returnDateModal.orderId, OrderStatus.RETURNED, returnDateModal.date);
         setReturnDateModal(null);
-      } catch (err) {
-        console.error('Confirm Return Error:', err);
-      } finally {
-        setIsUpdatingReturn(false);
-      }
-    }
-  };
-
-  const confirmDelete = () => {
-    if (deleteConfirmId) {
-      onDeleteOrder(deleteConfirmId);
-      setDeleteConfirmId(null);
+      } catch (err) {}
     }
   };
 
@@ -74,22 +59,30 @@ const OrderListView: React.FC<OrderListViewProps> = ({ orders, catalog, userRole
     return catalog.find(p => p.id === productId)?.image || '';
   };
 
+  const getBase64FromUrl = async (url: string): Promise<string | null> => {
+    if (!url) return null;
+    try {
+      const data = await fetch(url);
+      const blob = await data.blob();
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(blob);
+        reader.onloadend = () => {
+          const base64data = reader.result as string;
+          resolve(base64data);
+        };
+      });
+    } catch (e) {
+      console.error("Failed to convert image to base64", e);
+      return null;
+    }
+  };
+
   const isOverdue = (order: Order) => {
     return order.orderDate < todayStr && 
            order.status !== OrderStatus.COMPLETED && 
            order.status !== OrderStatus.CANCELED &&
            order.status !== OrderStatus.RETURNED;
-  };
-
-  const handleDateClick = (e: React.MouseEvent<HTMLInputElement>) => {
-    const input = e.currentTarget;
-    if ('showPicker' in HTMLInputElement.prototype) {
-      try {
-        input.showPicker();
-      } catch (err) {
-        input.focus();
-      }
-    }
   };
 
   const getMarketplaceColor = (mp: string) => {
@@ -100,301 +93,505 @@ const OrderListView: React.FC<OrderListViewProps> = ({ orders, catalog, userRole
     return 'bg-slate-50 text-slate-600 border-slate-100';
   };
 
-  const filteredOrders = orders.filter(o => {
-    const matchesSearch = o.orderId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (o.resi && o.resi.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      o.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (o.backName && o.backName.toLowerCase().includes(searchTerm.toLowerCase()));
-    
-    const matchesStatus = filters.status ? o.status === filters.status : true;
-    const matchesMarketplace = filters.marketplace ? o.marketplace === filters.marketplace : true;
-    const matchesType = filters.type ? o.type === filters.type : true;
-    const matchesCustom = filters.onlyCustom ? (o.backName || o.backNumber) : true;
-    const matchesUrgent = filters.onlyUrgent ? isOverdue(o) : true;
-    
-    let matchesDate = true;
-    if (filters.startDate && filters.endDate) {
-      matchesDate = o.orderDate >= filters.startDate && o.orderDate <= filters.endDate;
-    } else if (filters.startDate) {
-      matchesDate = o.orderDate >= filters.startDate;
-    } else if (filters.endDate) {
-      matchesDate = o.orderDate <= filters.endDate;
-    }
+  const filteredOrders = useMemo(() => {
+    return orders.filter(o => {
+      const matchesSearch = o.orderId.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (o.resi && o.resi.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        o.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (o.backName && o.backName.toLowerCase().includes(searchTerm.toLowerCase()));
+      
+      const matchesStatus = filters.status ? o.status === filters.status : true;
+      const matchesMarketplace = filters.marketplace ? o.marketplace === filters.marketplace : true;
+      const matchesType = filters.type ? o.type === filters.type : true;
+      const matchesCustom = filters.onlyCustom ? (o.backName || o.backNumber) : true;
+      const matchesUrgent = filters.onlyUrgent ? isOverdue(o) : true;
+      
+      let matchesDate = true;
+      if (filters.startDate && filters.endDate) {
+        matchesDate = o.orderDate >= filters.startDate && o.orderDate <= filters.endDate;
+      } else if (filters.startDate) {
+        matchesDate = o.orderDate >= filters.startDate;
+      } else if (filters.endDate) {
+        matchesDate = o.orderDate <= filters.endDate;
+      }
 
-    return matchesSearch && matchesStatus && matchesMarketplace && matchesType && matchesDate && matchesCustom && matchesUrgent;
-  });
-
-  const totalOrders = filteredOrders.length;
-  const totalQty = filteredOrders.reduce((sum, o) => sum + (o.quantity || 0), 0);
-  const overdueCount = orders.filter(o => isOverdue(o)).length;
-
-  const loadImage = (url: string): Promise<string> => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.crossOrigin = 'Anonymous';
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0);
-        resolve(canvas.toDataURL('image/jpeg', 0.8));
-      };
-      img.onerror = () => resolve('');
-      img.src = url;
+      return matchesSearch && matchesStatus && matchesMarketplace && matchesType && matchesDate && matchesCustom && matchesUrgent;
     });
-  };
+  }, [orders, searchTerm, filters, todayStr]);
+
+  const stats = useMemo(() => {
+    const mps: Record<string, { count: number; qty: number }> = {};
+    let totalQty = 0;
+
+    filteredOrders.forEach(o => {
+      if (!mps[o.marketplace]) {
+        mps[o.marketplace] = { count: 0, qty: 0 };
+      }
+      mps[o.marketplace].count += 1;
+      mps[o.marketplace].qty += (o.quantity || 0);
+      totalQty += (o.quantity || 0);
+    });
+
+    return {
+      marketplaces: Object.entries(mps).sort((a, b) => b[1].count - a[1].count),
+      totalCount: filteredOrders.length,
+      totalQty
+    };
+  }, [filteredOrders]);
 
   const handleExportPDF = async () => {
     setIsExporting(true);
     try {
       const doc = new jsPDF('landscape', 'mm', 'a4');
-      doc.setFillColor(15, 23, 42); doc.rect(0, 0, 297, 40, 'F');
-      doc.setFontSize(22); doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold');
-      doc.text('ERFOLGS STORE', 14, 18);
-      doc.setFontSize(8); doc.setTextColor(148, 163, 184); doc.text('PRODUCTION REPORT CLOUD SYSTEM', 14, 25);
+      const pageWidth = doc.internal.pageSize.getWidth();
       
-      const tableData = await Promise.all(filteredOrders.map(async (order) => {
-        const customLines = [];
-        if (order.backName) customLines.push(`Nama : ${order.backName}`);
-        if (order.backNumber) customLines.push(`No. ${order.backNumber}`);
-        return [
-          '', 
-          order.orderId,
-          order.marketplace,
-          order.expedition || '',
-          order.productName,
-          customLines.join('\n') || '',
-          order.size,
-          order.quantity,
-          order.orderDate,
-          STATUS_LABELS[order.status]
-        ];
-      }));
+      const mpCount = stats.marketplaces.length;
+      const rowsNeeded = Math.max(1, Math.ceil(mpCount / 4));
+      const headerAreaHeight = 45 + (rowsNeeded * 7);
+
+      // Main Header Rect
+      doc.setFillColor(15, 23, 42); 
+      doc.rect(0, 0, pageWidth, headerAreaHeight, 'F');
+      
+      doc.setFontSize(22); 
+      doc.setTextColor(255, 255, 255); 
+      doc.setFont('helvetica', 'bold');
+      doc.text('ERFOLGS STORE', 14, 18);
+      
+      doc.setFontSize(10); 
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Rekapitulasi Laporan Produksi - ${todayStr}`, 14, 28);
+      
+      // Grand Total Text
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(59, 130, 246);
+      doc.text(`TOTAL KESELURUHAN: ${stats.totalCount} ORDER / ${stats.totalQty} PCS`, pageWidth - 14, 28, { align: 'right' });
+
+      // Marketplace Summary
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(9);
+      doc.text('RINGKASAN MARKETPLACE:', 14, 38);
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      let currentY = 44;
+      stats.marketplaces.forEach(([name, data], idx) => {
+        const col = idx % 4;
+        const xPos = 14 + (col * 65);
+        doc.text(`${name}: ${data.count} Ord (${data.qty} Pcs)`, xPos, currentY);
+        if (col === 3) currentY += 6;
+      });
+
+      const tableBody = filteredOrders.map((order, index) => [
+        index + 1,
+        order.orderId, 
+        order.resi || '-', 
+        order.productName,
+        '', // Image placeholder
+        (order.backName || order.backNumber) ? `${order.backName || ''} #${order.backNumber || ''}` : '-',
+        order.size, 
+        order.quantity, 
+        order.marketplace, 
+        order.orderDate, 
+        order.expedition || '-',
+        STATUS_LABELS[order.status]
+      ]);
+
+      const imageMap = new Map<string, string | null>();
+      for (const order of filteredOrders) {
+        const imgUrl = getProductImage(order.productId);
+        if (imgUrl && !imageMap.has(imgUrl)) {
+          const base64 = await getBase64FromUrl(imgUrl);
+          imageMap.set(imgUrl, base64);
+        }
+      }
 
       autoTable(doc, {
-        startY: 45,
-        head: [['Foto', 'ID Order', 'Marketplace', 'Kurir', 'Produk', 'Custom', 'Size', 'Qty', 'Tanggal', 'Status']],
-        body: tableData,
+        startY: headerAreaHeight + 10,
+        head: [['No', 'ID Order', 'Resi', 'Produk', 'Foto', 'Custom', 'Size', 'Qty', 'Marketplace', 'Tanggal', 'Kurir', 'Status']],
+        body: tableBody,
         theme: 'grid',
-        styles: { fontSize: 7, cellPadding: 2, valign: 'middle' },
-        headStyles: { fillColor: [37, 99, 235], textColor: [255, 255, 255] },
-        columnStyles: { 0: { cellWidth: 22, minCellHeight: 22 }, 4: { cellWidth: 40 }, 5: { cellWidth: 35 } },
-        didDrawCell: async (data) => {
-          if (data.section === 'body' && data.column.index === 0) {
+        styles: { fontSize: 7, valign: 'middle', minCellHeight: 18, cellPadding: 2 },
+        headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'center' },
+        columnStyles: {
+          0: { cellWidth: 10, halign: 'center' },
+          1: { cellWidth: 25 },
+          2: { cellWidth: 25 },
+          3: { cellWidth: 35 },
+          4: { cellWidth: 20, halign: 'center' },
+          7: { halign: 'center', fontStyle: 'bold' }
+        },
+        didDrawCell: (data) => {
+          if (data.section === 'body' && data.column.index === 4) {
             const order = filteredOrders[data.row.index];
-            const imgUrl = getProductImage(order.productId);
-            if (imgUrl) {
-               const b64 = await loadImage(imgUrl);
-               if (b64) doc.addImage(b64, 'JPEG', data.cell.x + 2, data.cell.y + 2, 18, 18);
+            if (order) {
+              const base64 = imageMap.get(getProductImage(order.productId));
+              if (base64) {
+                const size = 14;
+                const x = data.cell.x + (data.cell.width - size) / 2;
+                const y = data.cell.y + (data.cell.height - size) / 2;
+                doc.addImage(base64, 'JPEG', x, y, size, size);
+              }
             }
           }
         }
       });
-      doc.save(`REKAPAN_ERFOLGS_${todayStr}.pdf`);
-    } catch (error) { console.error(error); } finally { setIsExporting(false); }
+
+      doc.save(`ERFOLGS_REPORT_${todayStr}.pdf`);
+    } catch (error) {
+      console.error(error);
+      alert("Gagal export PDF.");
+    } finally {
+      setIsExporting(false);
+    }
   };
 
-  const exportToExcel = () => {
-    const headers = ['ID Pesanan', 'Marketplace', 'Kurir', 'Resi', 'Nama Produk', 'Nama Player', 'No Player', 'Ukuran', 'Qty', 'Tgl Order', 'Status Akhir'];
-    const rows = filteredOrders.map(o => [
-      `"${o.orderId}"`, `"${o.marketplace}"`, `"${o.expedition || '-'}"`, `"${o.resi || '-'}"`, `"${o.productName}"`,
-      `"${o.backName || '-'}"`, `"${o.backNumber || '-'}"`, `"${o.size}"`, o.quantity, `"${o.orderDate}"`, `"${STATUS_LABELS[o.status]}"`
-    ]);
-    const csvString = "\ufeff" + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `ERFOLGS_EXPORT_${todayStr}.csv`;
-    link.click();
+  const handleExportExcel = async () => {
+    setIsExporting(true);
+    try {
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Daftar Pesanan');
+
+      worksheet.mergeCells('A1:M1');
+      worksheet.getCell('A1').value = 'ERFOLGS STORE - LAPORAN REKAPITULASI PRODUKSI';
+      worksheet.getCell('A1').font = { bold: true, size: 16 };
+      worksheet.getCell('A1').alignment = { horizontal: 'center' };
+
+      worksheet.mergeCells('A2:M2');
+      worksheet.getCell('A2').value = `GRAND TOTAL: ${stats.totalCount} ORDER / ${stats.totalQty} PCS | Tanggal: ${todayStr}`;
+      worksheet.getCell('A2').font = { bold: true, color: { argb: 'FF2563EB' } };
+      worksheet.getCell('A2').alignment = { horizontal: 'center' };
+
+      let currentRow = 4;
+      worksheet.getCell(`A${currentRow}`).value = 'RINGKASAN MARKETPLACE:';
+      worksheet.getCell(`A${currentRow}`).font = { bold: true };
+      currentRow++;
+
+      stats.marketplaces.forEach(([name, data]) => {
+        worksheet.getCell(`A${currentRow}`).value = name;
+        worksheet.getCell(`B${currentRow}`).value = `${data.count} Order`;
+        worksheet.getCell(`C${currentRow}`).value = `${data.qty} Pcs`;
+        currentRow++;
+      });
+
+      currentRow += 2;
+      const tableHeaderRow = currentRow;
+      const headers = ['NO', 'ID ORDER', 'RESI', 'PRODUK', 'FOTO', 'NAMA PUNGGUNG', 'NOMOR PUNGGUNG', 'SIZE', 'QTY', 'MARKETPLACE', 'TANGGAL', 'KURIR', 'STATUS'];
+      
+      const headerRow = worksheet.getRow(tableHeaderRow);
+      headerRow.values = headers;
+      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+      headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      worksheet.columns = [
+        { width: 8 }, { width: 25 }, { width: 20 }, { width: 35 }, { width: 18 }, { width: 20 }, { width: 15 }, { width: 10 }, { width: 10 }, { width: 25 }, { width: 15 }, { width: 15 }, { width: 20 }
+      ];
+
+      for (let i = 0; i < filteredOrders.length; i++) {
+        const order = filteredOrders[i];
+        const rowIndex = tableHeaderRow + i + 1;
+        
+        const rowValues = [
+          i + 1,
+          order.orderId,
+          order.resi || '-',
+          order.productName,
+          '', 
+          order.backName || '-',
+          order.backNumber || '-',
+          order.size,
+          order.quantity,
+          order.marketplace,
+          order.orderDate,
+          order.expedition || '-',
+          STATUS_LABELS[order.status]
+        ];
+
+        const row = worksheet.getRow(rowIndex);
+        row.values = rowValues;
+        row.height = 90;
+        row.alignment = { vertical: 'middle', horizontal: 'center' };
+        worksheet.getCell(`D${rowIndex}`).alignment = { horizontal: 'left', vertical: 'middle' };
+
+        const imgUrl = getProductImage(order.productId);
+        if (imgUrl) {
+          const base64 = await getBase64FromUrl(imgUrl);
+          if (base64) {
+            const imageId = workbook.addImage({ base64, extension: 'png' });
+            worksheet.addImage(imageId, {
+              tl: { col: 4.1, row: rowIndex - 0.95 },
+              ext: { width: 100, height: 100 }
+            });
+          }
+        }
+      }
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const anchor = document.createElement('a');
+      anchor.href = URL.createObjectURL(blob);
+      anchor.download = `ERFOLGS_EXCEL_${todayStr}.xlsx`;
+      anchor.click();
+    } catch (error) {
+      console.error(error);
+      alert("Gagal export Excel.");
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500 pb-20 w-full max-w-full">
-      <div className="bg-white p-6 md:p-10 rounded-[2.5rem] border border-slate-200 shadow-sm space-y-8 no-print">
-        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-6">
-           <div className="flex items-center gap-4 text-slate-800 font-black text-sm uppercase tracking-[0.2em]">
-             <div className="w-2 h-6 bg-blue-600 rounded-full"></div> Filter & Kendali Database
-           </div>
-           <div className="flex flex-wrap gap-4">
-             <button 
-               onClick={() => setFilters(prev => ({...prev, onlyCustom: !prev.onlyCustom}))}
-               className={`flex items-center gap-3 px-6 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${filters.onlyCustom ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
-             >
-               <UserPlus size={18} /> {filters.onlyCustom ? 'Tampilkan Semua Produk' : 'Filter Kustom Jersey'}
-             </button>
-             <button 
-               onClick={() => setFilters(prev => ({...prev, onlyUrgent: !prev.onlyUrgent}))}
-               className={`flex items-center gap-3 px-6 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${filters.onlyUrgent ? 'bg-red-600 text-white shadow-lg shadow-red-200' : 'bg-red-50 text-red-600 border border-red-100 hover:bg-red-100'}`}
-             >
-               <AlertTriangle size={18} className={filters.onlyUrgent ? 'animate-bounce' : ''} /> 
-               {filters.onlyUrgent ? 'SEMUA DATA' : `URGENT (${overdueCount})`}
-             </button>
-             <button onClick={exportToExcel} className="flex items-center gap-3 px-6 py-3.5 bg-emerald-500 text-white rounded-2xl text-[10px] font-black uppercase shadow-lg shadow-emerald-100 hover:bg-emerald-600 active:scale-95 transition-all">
-               <FileSpreadsheet size={18} /> EXCEL
-             </button>
-             <button 
-               onClick={handleExportPDF} 
-               disabled={isExporting}
-               className="flex items-center gap-3 px-6 py-3.5 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase shadow-lg shadow-blue-100 hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-50"
-             >
-               {isExporting ? <Clock size={18} className="animate-spin" /> : <Download size={18} />}
-               {isExporting ? 'MENYIAPKAN FOTO...' : 'EXPORT PDF + FOTO'}
-             </button>
-           </div>
+    <div className="space-y-4 md:space-y-6 animate-in fade-in duration-500 pb-20 w-full max-w-full">
+      
+      {/* Marketplace & Totals Summary Bar */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 no-print">
+        <div className="md:col-span-1 bg-slate-900 p-6 rounded-[2rem] border border-slate-800 shadow-xl shadow-slate-200/50 flex flex-col justify-center relative overflow-hidden group">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-blue-50/10 rounded-full -mr-8 -mt-8 blur-2xl"></div>
+          <div className="flex items-center gap-4 mb-2">
+            <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-500/20">
+              <BarChart3 size={20} />
+            </div>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Grand Total</p>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-3xl font-black text-white tracking-tighter">{stats.totalCount}</span>
+            <span className="text-[10px] font-black text-blue-400 uppercase">Order</span>
+            <span className="mx-2 text-slate-700">/</span>
+            <span className="text-3xl font-black text-white tracking-tighter">{stats.totalQty}</span>
+            <span className="text-[10px] font-black text-emerald-400 uppercase">Pcs</span>
+          </div>
         </div>
-        
-        {/* Filter Bar */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-12 gap-4">
-          <div className="xl:col-span-3 relative">
-            <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
+
+        <div className="md:col-span-3 bg-white p-4 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4 overflow-x-auto custom-scrollbar no-print">
+          {stats.marketplaces.length > 0 ? stats.marketplaces.map(([name, data]) => (
+            <div key={name} className="flex-shrink-0 px-6 py-3 bg-slate-50 border border-slate-100 rounded-2xl flex flex-col gap-1 min-w-[160px] hover:bg-white hover:border-blue-200 transition-all group">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[9px] font-black text-slate-400 uppercase truncate max-w-[100px]">{name}</span>
+                <div className="w-2 h-2 rounded-full bg-blue-500 group-hover:animate-pulse"></div>
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-xl font-black text-slate-900 tracking-tight">{data.count}</span>
+                <span className="text-[8px] font-bold text-slate-400 uppercase">Ord</span>
+                <span className="text-xl font-black text-blue-600 tracking-tight">{data.qty}</span>
+                <span className="text-[8px] font-bold text-slate-400 uppercase">Pcs</span>
+              </div>
+            </div>
+          )) : (
+            <div className="w-full text-center py-4 text-[10px] font-black text-slate-300 uppercase tracking-widest">
+              Belum ada data untuk marketplace terpilih
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Search & Filter Panel */}
+      <div className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm space-y-6 no-print">
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="flex-1 relative group">
+            <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-500 transition-colors" size={20} />
             <input 
               type="text" 
-              placeholder="Cari ID, Nama, Resi..." 
+              placeholder="Cari Pesanan (ID, Resi, Produk, Custom)..." 
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-sm font-bold outline-none focus:bg-white focus:ring-4 focus:ring-blue-50/50 transition-all focus:border-blue-200"
+              className="w-full pl-14 pr-6 py-4 bg-slate-50 border-2 border-transparent rounded-2xl text-sm font-bold focus:bg-white focus:ring-4 focus:ring-blue-50/50 outline-none transition-all focus:border-blue-200"
             />
           </div>
+          <button 
+            onClick={() => setShowFiltersMobile(!showFiltersMobile)}
+            className="md:hidden flex items-center justify-center gap-3 p-4 bg-slate-100 text-slate-600 rounded-2xl text-sm font-black"
+          >
+            <Filter size={18} /> {showFiltersMobile ? 'Tutup Filter' : 'Filter Lanjutan'}
+          </button>
+        </div>
 
+        <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-12 gap-4 ${showFiltersMobile ? 'grid' : 'hidden md:grid'}`}>
           <div className="xl:col-span-2">
-            <select value={filters.status} onChange={(e) => setFilters(prev => ({...prev, status: e.target.value}))} className="w-full px-4 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[10px] font-black uppercase outline-none cursor-pointer focus:bg-white appearance-none">
-              <option value="">-- SEMUA STATUS --</option>
+            <select value={filters.status} onChange={(e) => setFilters(prev => ({...prev, status: e.target.value}))} className="w-full px-5 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[11px] font-black uppercase outline-none focus:bg-white focus:border-blue-100 transition-all cursor-pointer">
+              <option value="">STATUS PRODUKSI</option>
               {Object.entries(STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </div>
-
           <div className="xl:col-span-2">
-            <select value={filters.marketplace} onChange={(e) => setFilters(prev => ({...prev, marketplace: e.target.value}))} className="w-full px-4 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[10px] font-black uppercase outline-none cursor-pointer focus:bg-white appearance-none">
-              <option value="">-- MARKETPLACE --</option>
+            <select value={filters.marketplace} onChange={(e) => setFilters(prev => ({...prev, marketplace: e.target.value}))} className="w-full px-5 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[11px] font-black uppercase outline-none focus:bg-white focus:border-blue-100 transition-all cursor-pointer">
+              <option value="">MARKETPLACE</option>
               {MARKETPLACE_LIST.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
           </div>
-
-          <div className="xl:col-span-1">
-            <select value={filters.type} onChange={(e) => setFilters(prev => ({...prev, type: e.target.value}))} className="w-full px-4 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[10px] font-black uppercase outline-none cursor-pointer focus:bg-white appearance-none">
-              <option value="">TIPE</option>
-              <option value={OrderType.PRE_ORDER}>PO</option>
-              <option value={OrderType.STOCK}>STOK</option>
+          <div className="xl:col-span-2">
+            <select value={filters.type} onChange={(e) => setFilters(prev => ({...prev, type: e.target.value}))} className="w-full px-5 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[11px] font-black uppercase outline-none focus:bg-white focus:border-blue-100 transition-all cursor-pointer">
+              <option value="">TIPE (PO/STOCK)</option>
+              <option value={OrderType.PRE_ORDER}>PRODUKSI (PO)</option>
+              <option value={OrderType.STOCK}>STOK READY</option>
             </select>
           </div>
-
-          <div className="xl:col-span-4 flex flex-col sm:flex-row gap-2">
-             <div className="flex-1 relative group bg-slate-50 border-2 border-transparent rounded-2xl hover:bg-white hover:border-blue-100 transition-all cursor-pointer">
-                <div className="absolute right-4 top-1/2 -translate-y-1/2 text-blue-500 z-10 pointer-events-none">
-                  <Calendar size={18} />
-                </div>
-                <div className="absolute left-4 top-1.5 text-[8px] font-black text-slate-400 uppercase tracking-widest z-10">Dari</div>
-                <input type="date" value={filters.startDate} onChange={(e) => setFilters(prev => ({...prev, startDate: e.target.value}))} onClick={handleDateClick} className="w-full pl-4 pr-10 pt-4 pb-2 bg-transparent border-none text-[11px] font-black outline-none cursor-pointer" />
-             </div>
-             <div className="flex-1 relative group bg-slate-50 border-2 border-transparent rounded-2xl hover:bg-white hover:border-blue-100 transition-all cursor-pointer">
-                <div className="absolute right-4 top-1/2 -translate-y-1/2 text-blue-500 z-10 pointer-events-none">
-                  <Calendar size={18} />
-                </div>
-                <div className="absolute left-4 top-1.5 text-[8px] font-black text-slate-400 uppercase tracking-widest z-10">Sampai</div>
-                <input type="date" value={filters.endDate} onChange={(e) => setFilters(prev => ({...prev, endDate: e.target.value}))} onClick={handleDateClick} className="w-full pl-4 pr-10 pt-4 pb-2 bg-transparent border-none text-[11px] font-black outline-none cursor-pointer" />
-             </div>
+          <div className="xl:col-span-1">
+             <button 
+               onClick={() => setFilters(prev => ({...prev, onlyCustom: !prev.onlyCustom}))}
+               className={`w-full py-3.5 rounded-2xl text-[10px] font-black uppercase transition-all flex items-center justify-center gap-2 border-2 ${filters.onlyCustom ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-100' : 'bg-white border-slate-100 text-slate-400 hover:border-blue-200'}`}
+             >
+               <Scissors size={14} /> CUSTOM
+             </button>
+          </div>
+          <div className="xl:col-span-1">
+             <button 
+               onClick={() => setFilters(prev => ({...prev, onlyUrgent: !prev.onlyUrgent}))}
+               className={`w-full py-3.5 rounded-2xl text-[10px] font-black uppercase transition-all flex items-center justify-center gap-2 border-2 ${filters.onlyUrgent ? 'bg-red-600 border-red-600 text-white shadow-lg shadow-red-100' : 'bg-white border-slate-100 text-slate-400 hover:border-red-200'}`}
+             >
+               <AlertTriangle size={14} /> URGENT
+             </button>
+          </div>
+          <div className="xl:col-span-2 flex gap-2">
+             <input type="date" value={filters.startDate} onChange={(e) => setFilters(prev => ({...prev, startDate: e.target.value}))} className="flex-1 px-4 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[11px] font-black outline-none focus:bg-white focus:border-blue-100" />
+             <input type="date" value={filters.endDate} onChange={(e) => setFilters(prev => ({...prev, endDate: e.target.value}))} className="flex-1 px-4 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl text-[11px] font-black outline-none focus:bg-white focus:border-blue-100" />
+          </div>
+          <div className="xl:col-span-2 flex gap-2">
+             <button onClick={handleExportPDF} disabled={isExporting} className="flex-1 py-3.5 bg-red-600 text-white rounded-2xl text-[11px] font-black uppercase disabled:opacity-50 hover:bg-red-700 transition-all shadow-md active:scale-95">
+               {isExporting ? '...' : 'PDF'}
+             </button>
+             <button onClick={handleExportExcel} disabled={isExporting} className="flex-1 py-3.5 bg-emerald-600 text-white rounded-2xl text-[11px] font-black uppercase disabled:opacity-50 hover:bg-emerald-700 transition-all shadow-md active:scale-95">
+               {isExporting ? '...' : 'EXCEL'}
+             </button>
+             <button onClick={() => setFilters({ status: '', marketplace: '', type: '', startDate: '', endDate: '', onlyCustom: false, onlyUrgent: false })} className="p-3.5 bg-slate-100 text-slate-400 rounded-2xl hover:bg-slate-200 transition-colors">
+               <RotateCcw size={18} />
+             </button>
           </div>
         </div>
       </div>
 
-      <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden w-full max-w-full">
+      {/* Main Table View */}
+      <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto custom-scrollbar">
-          <table className="w-full text-left border-collapse min-w-[1650px]">
+          <table className="w-full text-left border-collapse min-w-[1850px]">
             <thead className="bg-slate-50/80">
-              <tr>
-                <th className="px-5 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] w-24">Foto</th>
-                <th className="px-5 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] w-48">ID Pesanan</th>
-                <th className="px-5 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] w-48">No. Resi</th>
-                <th className="px-5 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Produk & Kustom</th>
-                <th className="px-5 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] w-56">Marketplace</th>
-                <th className="px-5 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] w-40">Kurir</th>
-                <th className="px-5 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] w-28 text-center">Tipe</th>
-                <th className="px-5 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] min-w-[170px]">Tanggal</th>
-                <th className="px-5 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] w-20 text-center">Size</th>
-                <th className="px-5 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] w-20 text-center">Qty</th>
-                <th className="px-5 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] w-60">Status</th>
-                <th className="px-5 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] w-32 text-right">Navigasi</th>
+              <tr className="border-b border-slate-100">
+                <th className="px-4 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest w-16 text-center">No</th>
+                <th className="px-5 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest w-36">ID Pesanan</th>
+                <th className="px-5 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest w-52">No. Resi</th>
+                <th className="pl-6 pr-1 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest w-96">Produk</th>
+                <th className="pl-1 pr-5 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest w-24 text-center">Foto</th>
+                <th className="px-6 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest w-64">Kustomisasi</th>
+                <th className="px-5 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest w-20 text-center">Size</th>
+                <th className="px-5 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest w-20 text-center">Qty</th>
+                <th className="px-5 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest w-60">Marketplace</th>
+                <th className="px-5 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest w-44">Tanggal</th>
+                <th className="px-5 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest w-44">Ekspedisi</th>
+                <th className="px-5 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest w-64 text-center">Status</th>
+                <th className="px-5 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest w-32 text-right">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-8 py-32 text-center text-slate-400 font-bold uppercase tracking-[0.3em] text-sm italic">
-                    Database: Data tidak ditemukan.
+                  <td colSpan={13} className="px-6 py-28 text-center text-slate-300 font-black uppercase tracking-[0.4em] text-xs">
+                    Data pesanan tidak ditemukan
                   </td>
                 </tr>
               ) : (
-                filteredOrders.map((order) => {
+                filteredOrders.map((order, idx) => {
                   const img = getProductImage(order.productId);
-                  const overdue = isOverdue(order);
                   return (
-                    <tr key={order.id} className={`transition-all group ${overdue ? 'bg-red-50/30' : 'hover:bg-slate-50/50'}`}>
-                      <td className="px-5 py-6">
-                         <div className="w-16 h-16 rounded-2xl border-4 border-white shadow-md bg-slate-50 overflow-hidden flex items-center justify-center">
-                            {img ? <img src={img} className="w-full h-full object-cover" /> : <ImageIcon className="text-slate-200" size={28} />}
-                         </div>
+                    <tr key={order.id} className={`hover:bg-slate-50/80 transition-all duration-200 ${isOverdue(order) ? 'bg-red-50/20' : ''}`}>
+                      <td className="px-4 py-5 text-center">
+                        <span className="text-[11px] font-black text-slate-400">{idx + 1}</span>
                       </td>
-                      <td className="px-5 py-6">
-                        <div className={`font-black text-[13px] tracking-tight flex items-center gap-2 ${overdue ? 'text-red-600' : 'text-slate-900'}`}>
-                          {overdue && <AlertTriangle size={14} className="animate-pulse" />} #{order.orderId}
-                        </div>
+                      <td className="px-5 py-5">
+                        <span className={`text-[13px] font-black ${isOverdue(order) ? 'text-red-600' : 'text-slate-900'}`}>{order.orderId}</span>
                       </td>
-                      <td className="px-5 py-6">
-                        <div className="text-[11px] font-black text-slate-500 uppercase flex items-center gap-2 bg-slate-100 px-3 py-2 rounded-xl w-fit">
-                           <Tag size={12} /> {order.resi || '-'}
-                        </div>
-                      </td>
-                      <td className="px-5 py-6">
-                        <div className="text-sm font-black text-blue-600 uppercase truncate max-w-[250px]">{order.productName}</div>
-                        {(order.backName || order.backNumber) && (
-                           <div className="flex gap-2 mt-2">
-                             {order.backName && <span className="px-2 py-1 bg-slate-900 text-white rounded text-[9px] font-black">{order.backName}</span>}
-                             {order.backNumber && <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-[9px] font-black">#{order.backNumber}</span>}
-                           </div>
+                      <td className="px-5 py-5">
+                        {order.resi ? (
+                           <span className="text-[11px] font-black text-slate-700 uppercase tracking-tight">{order.resi}</span>
+                        ) : (
+                           <span className="text-[10px] font-bold text-slate-300 uppercase italic">Belum Input</span>
                         )}
                       </td>
-                      <td className="px-5 py-6">
-                        <span className={`px-4 py-2 border rounded-2xl text-[10px] font-black uppercase tracking-widest ${getMarketplaceColor(order.marketplace)}`}>
+                      <td className="pl-6 pr-1 py-5">
+                        <p className="text-sm font-black text-blue-600 uppercase leading-tight">{order.productName}</p>
+                        <p className={`text-[9px] font-bold uppercase mt-1 ${order.type === OrderType.STOCK ? 'text-emerald-500' : 'text-indigo-400'}`}>
+                          {order.type === OrderType.STOCK ? 'READY STOCK' : 'PRE-ORDER (PO)'}
+                        </p>
+                      </td>
+                      <td className="pl-1 pr-5 py-5 relative group/photo">
+                        <div className="w-14 h-14 rounded-2xl overflow-hidden border border-slate-100 bg-white shadow-sm flex-shrink-0 cursor-zoom-in transition-transform active:scale-95 mx-auto">
+                          {img ? <img src={img} className="w-full h-full object-cover" alt="" /> : <ImageIcon className="w-full h-full p-4 text-slate-200" />}
+                        </div>
+                        {img && (
+                          <div className="absolute left-full top-1/2 -translate-y-1/2 ml-4 w-64 h-64 bg-white border border-slate-200 rounded-[2.5rem] shadow-2xl z-[100] overflow-hidden pointer-events-none opacity-0 group-hover/photo:opacity-100 transition-all duration-300 scale-90 group-hover/photo:scale-100 origin-left">
+                            <img src={img} className="w-full h-full object-cover" alt="Preview" />
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-6 py-5">
+                        {order.backName ? (
+                          <div className="flex items-center gap-4">
+                             <div className="w-1 h-10 bg-indigo-500 rounded-full"></div>
+                             <div>
+                                <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-tighter leading-none mb-1.5">NAMA: <span className="text-slate-900 font-black text-[11px] uppercase">{order.backName}</span></p>
+                                <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-tighter leading-none">NO: <span className="text-slate-900 font-black text-[11px]">{order.backNumber || '00'}</span></p>
+                             </div>
+                          </div>
+                        ) : (
+                          <span className="text-[10px] font-bold text-slate-300 uppercase italic">Tanpa Nama</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-5 text-center">
+                        <span className="text-sm font-black text-slate-900">{order.size}</span>
+                      </td>
+                      <td className="px-5 py-5 text-center">
+                        <span className="text-sm font-black text-slate-900">x{order.quantity}</span>
+                      </td>
+                      <td className="px-5 py-5">
+                        <span className={`px-4 py-2 border rounded-xl text-[10px] font-black uppercase inline-block shadow-sm whitespace-nowrap ${getMarketplaceColor(order.marketplace)}`}>
                           {order.marketplace}
                         </span>
                       </td>
-                      <td className="px-5 py-6">
-                        <div className="text-[11px] font-black text-slate-600 flex items-center gap-2"><Truck size={14} /> {order.expedition || '-'}</div>
+                      <td className="px-5 py-5">
+                        <div className="flex items-center gap-2.5 whitespace-nowrap">
+                           <Calendar size={16} className="text-slate-400" />
+                           <span className="text-[11px] font-black text-slate-700 uppercase tracking-tighter">{order.orderDate}</span>
+                        </div>
                       </td>
-                      <td className="px-5 py-6 text-center">
-                        <span className={`px-3 py-1.5 rounded-xl text-[9px] font-black border ${order.type === OrderType.STOCK ? 'bg-emerald-50 text-emerald-700' : 'bg-indigo-50 text-indigo-700'}`}>
-                          {order.type === OrderType.STOCK ? 'STOK' : 'PO'}
-                        </span>
+                      <td className="px-5 py-5">
+                        <div className="flex items-center gap-2.5 whitespace-nowrap">
+                           <Truck size={16} className="text-slate-400" />
+                           <span className="text-[11px] font-black text-slate-700 uppercase tracking-tight">{order.expedition || '-'}</span>
+                        </div>
                       </td>
-                      <td className="px-5 py-6">
-                        <div className="text-[11px] font-black flex items-center gap-2"><Calendar size={13} /> {order.orderDate}</div>
-                      </td>
-                      <td className="px-5 py-6 text-center font-black">{order.size}</td>
-                      <td className="px-5 py-6 text-center font-black">x{order.quantity}</td>
-                      <td className="px-5 py-6">
+                      <td className="px-5 py-5">
                         {editingStatusId === order.id ? (
                           <div className="relative">
-                            <select autoFocus value={order.status} onChange={(e) => handleStatusChange(order.id, e.target.value as OrderStatus)} className="w-full text-[10px] font-black border-2 border-blue-500 rounded-2xl p-3 outline-none bg-white shadow-2xl">
+                            <select 
+                              autoFocus 
+                              value={order.status} 
+                              onChange={(e) => handleStatusChange(order.id, e.target.value as OrderStatus)} 
+                              className="w-full text-[10px] font-black border-2 border-blue-500 rounded-xl px-4 py-2.5 bg-white shadow-xl outline-none appearance-none"
+                            >
                               {Object.entries(STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                             </select>
+                            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-blue-500 pointer-events-none" size={14} />
                           </div>
                         ) : (
-                          <div className="flex items-center gap-3 group/status">
-                            <span className={`px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${getStatusColor(order.status)} whitespace-nowrap`}>
-                              {STATUS_LABELS[order.status]}
-                            </span>
-                            <button onClick={() => setEditingStatusId(order.id)} className="opacity-0 group-hover/status:opacity-100 p-2 text-slate-400 hover:text-blue-600 transition-all"><Edit3 size={18} /></button>
+                          <div className="flex items-center justify-center gap-3 group/st">
+                            <div className="flex flex-col items-center gap-1.5">
+                              <span className={`px-5 py-2.5 rounded-full text-[10px] font-black uppercase border shadow-sm transition-all whitespace-nowrap ${getStatusColor(order.status)}`}>
+                                {STATUS_LABELS[order.status]}
+                              </span>
+                              {order.status === OrderStatus.RETURNED && order.returnDate && (
+                                <span className="text-[9px] font-black text-amber-600 uppercase tracking-tighter flex items-center gap-1">
+                                  <RotateCcw size={10} /> {order.returnDate}
+                                </span>
+                              )}
+                            </div>
+                            <button onClick={() => setEditingStatusId(order.id)} className="opacity-0 group-hover/st:opacity-100 text-slate-400 hover:text-blue-600 transition-all p-2 bg-white rounded-xl border border-slate-100 shadow-sm active:scale-90"><Edit3 size={16} /></button>
                           </div>
                         )}
                       </td>
-                      <td className="px-5 py-6 text-right">
-                        <div className="flex justify-end gap-2.5">
-                          <button onClick={() => setSelectedOrder(order)} className="p-3.5 text-slate-400 hover:bg-slate-900 hover:text-white rounded-2xl transition-all bg-slate-50 border border-slate-100 shadow-sm"><HistoryIcon size={20} /></button>
-                          {isSuperAdmin && (
-                            <button onClick={() => setDeleteConfirmId(order.id)} className="p-3.5 text-slate-400 hover:bg-red-600 hover:text-white rounded-2xl transition-all bg-slate-50 border border-slate-100 shadow-sm"><Trash2 size={20} /></button>
-                          )}
-                        </div>
+                      <td className="px-5 py-5 text-right">
+                         <div className="flex justify-end gap-1.5">
+                           <button onClick={() => setSelectedOrder(order)} className="p-2.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"><HistoryIcon size={20} /></button>
+                           {isSuperAdmin && <button onClick={() => setDeleteConfirmId(order.id)} className="p-2.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"><Trash2 size={20} /></button>}
+                         </div>
                       </td>
                     </tr>
                   );
@@ -405,57 +602,111 @@ const OrderListView: React.FC<OrderListViewProps> = ({ orders, catalog, userRole
         </div>
       </div>
 
-      {/* Modal Konfirmasi Hapus - MEMPERBAIKI BUG USER */}
-      {deleteConfirmId && (
-        <div className="fixed inset-0 z-[1200] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-300">
-           <div className="bg-white w-full max-w-sm rounded-[2.5rem] shadow-2xl p-10 text-center space-y-8 border border-slate-100 animate-in zoom-in duration-300">
-              <div className="w-20 h-20 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mx-auto border border-red-100 shadow-xl shadow-red-200/20">
-                 <Trash2 size={40} />
-              </div>
-              <div className="space-y-2">
-                 <h3 className="text-xl font-black text-slate-900 uppercase">Hapus Transaksi?</h3>
-                 <p className="text-xs font-bold text-slate-400 leading-relaxed">Data pesanan ini akan dihapus permanen dari database cloud dan tidak bisa dikembalikan.</p>
-              </div>
-              <div className="flex flex-col gap-3">
-                 <button onClick={confirmDelete} className="w-full py-4 bg-red-600 text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-xl shadow-red-200 hover:bg-red-700 transition-all active:scale-95">Hapus Permanen</button>
-                 <button onClick={() => setDeleteConfirmId(null)} className="w-full py-4 bg-slate-100 text-slate-500 rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-slate-200 transition-all active:scale-95">Batal</button>
-              </div>
-           </div>
-        </div>
-      )}
-
-      {/* Detail Riwayat Modal */}
+      {/* History Modal */}
       {selectedOrder && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-900/70 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="bg-white w-full max-w-xl rounded-[3rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] border border-slate-100">
-            <div className="p-10 border-b border-slate-100 flex justify-between items-center bg-slate-900 text-white">
-               <div><h3 className="text-2xl font-black tracking-tighter uppercase">Log Produksi</h3></div>
-               <button onClick={() => setSelectedOrder(null)} className="p-4 hover:bg-white/10 rounded-[1.5rem]"><X size={28} /></button>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-7 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+               <div>
+                 <h3 className="text-xl font-black uppercase text-slate-900 tracking-tight">Timeline Produksi</h3>
+                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Pesanan {selectedOrder.orderId}</p>
+               </div>
+               <button onClick={() => setSelectedOrder(null)} className="p-3 text-slate-400 hover:text-slate-900 transition-colors bg-white rounded-2xl shadow-sm"><X size={24} /></button>
             </div>
-            <div className="p-10 overflow-y-auto custom-scrollbar flex-1 space-y-8">
-               {selectedOrder.history.map((h, i) => (
-                  <div key={i} className="flex gap-6 relative">
-                     <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center font-black text-[10px] text-slate-400 shrink-0">{i+1}</div>
-                     <div className="flex-1 pb-8 border-b border-slate-50">
-                        <p className="text-xs font-black uppercase text-slate-800">{STATUS_LABELS[h.status]}</p>
-                        <p className="text-[10px] text-slate-400 font-bold mt-1">Oleh: {h.updatedBy} • {new Date(h.updatedAt).toLocaleString()}</p>
+            
+            <div className="p-8 overflow-y-auto custom-scrollbar flex-1 space-y-8">
+               <div className="flex flex-col sm:flex-row gap-6 p-6 bg-slate-50 rounded-[2rem] border border-slate-100">
+                  <div className="w-full sm:w-32 h-32 bg-white rounded-2xl overflow-hidden shadow-sm border border-slate-200 flex-shrink-0">
+                     {getProductImage(selectedOrder.productId) ? (
+                        <img src={getProductImage(selectedOrder.productId)} className="w-full h-full object-cover" alt="" />
+                     ) : (
+                        <div className="w-full h-full flex items-center justify-center text-slate-200 bg-slate-100">
+                           <ImageIcon size={32} />
+                        </div>
+                     )}
+                  </div>
+                  <div className="flex-1 space-y-4">
+                     <div>
+                        <h4 className="text-sm font-black text-slate-900 uppercase leading-tight line-clamp-2">{selectedOrder.productName}</h4>
+                        <div className={`mt-2 inline-block px-3 py-1 rounded-lg border text-[9px] font-black uppercase tracking-wider ${getMarketplaceColor(selectedOrder.marketplace)}`}>
+                           {selectedOrder.marketplace}
+                        </div>
+                     </div>
+                     <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-white p-3 rounded-xl border border-slate-100">
+                           <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Quantity</p>
+                           <p className="text-sm font-black text-slate-900">x{selectedOrder.quantity} Pcs</p>
+                        </div>
+                        <div className="bg-white p-3 rounded-xl border border-slate-100">
+                           <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Ukuran</p>
+                           <p className="text-sm font-black text-blue-600">{selectedOrder.size}</p>
+                        </div>
                      </div>
                   </div>
-               ))}
+               </div>
+
+               <div className="space-y-7 relative">
+                  <div className="absolute left-4 top-4 bottom-4 w-0.5 bg-slate-100"></div>
+                  {selectedOrder.history && selectedOrder.history.length > 0 ? (
+                    selectedOrder.history.map((h, i) => (
+                       <div key={i} className="flex gap-5 relative pl-2">
+                          <div className={`w-9 h-9 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 z-10 border-4 border-white ${i === selectedOrder.history.length - 1 ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'bg-slate-100 text-slate-400'}`}>
+                            {i + 1}
+                          </div>
+                          <div className="flex-1 pb-2">
+                             <p className={`text-[12px] font-black uppercase ${i === selectedOrder.history.length - 1 ? 'text-blue-600' : 'text-slate-700'}`}>{STATUS_LABELS[h.status]}</p>
+                             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
+                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                                   <UserIcon size={12} className="text-slate-300" /> {h.updatedBy}
+                                </p>
+                                <span className="text-slate-200 hidden sm:inline">|</span>
+                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight flex items-center gap-1.5">
+                                   <Clock size={12} className="text-slate-300" /> {new Date(h.updatedAt).toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                </p>
+                             </div>
+                          </div>
+                       </div>
+                    ))
+                  ) : (
+                    <p className="text-center text-slate-400 text-xs py-14 font-bold uppercase tracking-widest">Belum ada riwayat pengerjaan.</p>
+                  )}
+               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Return Date Modal */}
-      {returnDateModal && (
-        <div className="fixed inset-0 z-[1100] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md">
-           <div className="bg-white w-full max-w-[400px] rounded-[2.5rem] p-8 space-y-8">
-              <h3 className="text-xl font-black text-slate-900 uppercase">Input Tanggal Return</h3>
-              <input type="date" value={returnDateModal.date} onChange={(e) => setReturnDateModal(prev => prev ? {...prev, date: e.target.value} : null)} className="w-full px-6 py-4 bg-slate-50 rounded-2xl font-black uppercase outline-none" />
+      {/* Delete Confirmation */}
+      {deleteConfirmId && (
+        <div className="fixed inset-0 z-[1200] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-md animate-in fade-in zoom-in duration-300">
+           <div className="bg-white w-full max-w-sm rounded-[3rem] p-10 text-center space-y-8 border border-slate-100 shadow-2xl">
+              <div className="w-24 h-24 bg-red-50 text-red-500 rounded-[2rem] flex items-center justify-center mx-auto border border-red-100 shadow-xl shadow-red-200/20">
+                <Trash2 size={44} />
+              </div>
+              <div className="space-y-3">
+                <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight">Hapus Pesanan?</h3>
+                <p className="text-[11px] font-bold text-slate-400 leading-relaxed uppercase tracking-wider">Tindakan ini tidak dapat dibatalkan.</p>
+              </div>
               <div className="flex flex-col gap-3">
-                 <button onClick={confirmReturnDate} disabled={isUpdatingReturn} className="w-full py-4 bg-amber-500 text-white rounded-2xl font-black text-xs uppercase">Konfirmasi</button>
-                 <button onClick={() => setReturnDateModal(null)} className="w-full py-4 bg-slate-100 text-slate-500 rounded-2xl font-black text-xs uppercase">Batal</button>
+                 <button onClick={() => {onDeleteOrder(deleteConfirmId); setDeleteConfirmId(null);}} className="w-full py-4.5 bg-red-600 text-white rounded-2xl font-black text-[11px] uppercase tracking-[0.3em] shadow-xl shadow-red-200 hover:bg-red-700">Hapus Sekarang</button>
+                 <button onClick={() => setDeleteConfirmId(null)} className="w-full py-4.5 bg-slate-100 text-slate-500 rounded-2xl font-black text-[11px] uppercase tracking-[0.3em]">Batalkan</button>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {/* Return Modal */}
+      {returnDateModal && (
+        <div className="fixed inset-0 z-[1100] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md animate-in fade-in duration-300">
+           <div className="bg-white w-full max-w-[400px] rounded-[3rem] p-10 space-y-8 shadow-2xl">
+              <div className="space-y-3 text-center">
+                <h3 className="text-2xl font-black text-slate-900 uppercase">Set Tanggal Return</h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Kapan pesanan ini kembali ke gudang?</p>
+              </div>
+              <input type="date" value={returnDateModal.date} onChange={(e) => setReturnDateModal(prev => prev ? {...prev, date: e.target.value} : null)} className="w-full px-6 py-5 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black uppercase outline-none focus:border-blue-500 transition-all text-center" />
+              <div className="flex flex-col gap-3">
+                 <button onClick={confirmReturnDate} className="w-full py-4.5 bg-amber-500 text-white rounded-2xl font-black text-[11px] uppercase tracking-[0.3em] shadow-xl shadow-amber-200 hover:bg-amber-600">Simpan Status Return</button>
+                 <button onClick={() => setReturnDateModal(null)} className="w-full py-4.5 bg-slate-100 text-slate-500 rounded-2xl font-black text-[11px] uppercase tracking-[0.3em]">Batal</button>
               </div>
            </div>
         </div>
@@ -466,10 +717,11 @@ const OrderListView: React.FC<OrderListViewProps> = ({ orders, catalog, userRole
 
 const getStatusColor = (status: OrderStatus) => {
   if (status === OrderStatus.COMPLETED) return 'bg-green-100 text-green-700 border-green-200';
-  if (status === OrderStatus.READY_TO_SHIP) return 'bg-indigo-100 text-indigo-700 border-indigo-200';
+  if (status === OrderStatus.READY_TO_SHIP) return 'bg-indigo-100 text-indigo-700 border-indigo-200 shadow-sm';
   if (status === OrderStatus.CANCELED) return 'bg-red-100 text-red-700 border-red-200';
   if (status === OrderStatus.RETURNED) return 'bg-amber-100 text-amber-700 border-amber-200';
-  return 'bg-blue-100 text-blue-700 border-blue-200';
+  if (status.includes('IN_')) return 'bg-blue-600 text-white border-blue-600 shadow-md';
+  return 'bg-blue-50 text-blue-600 border-blue-100';
 };
 
 export default OrderListView;
